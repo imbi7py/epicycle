@@ -21,12 +21,12 @@ class TimerHeap(object):
         self._last_id += 1
         return self._last_id
 
-    def add(self, interval, f, *args, **kwargs):
+    def add(self, deadline, f, *args, **kwargs):
         request_id = self._make_id()
         action = (f, args, kwargs)
         heapq.heappush(
             self._heap,
-            (self._time + interval, request_id, action)
+            (deadline, request_id, action)
         )
         return request_id
 
@@ -44,7 +44,6 @@ class TimerHeap(object):
             deadline, request_id, action = heapq.heappop(self._heap)
             f, args, kwargs = action
             f(*args, **kwargs)
-        self._time = now
 
     def when(self):
         if not self._heap:
@@ -197,11 +196,12 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
                    script=scripts, target=scripts)
     def add(self, interval, script):
         def perform_add(wheel, heap, state):
+            deadline = state.now + interval
             action = state.make_action()
 
             self.assert_whens(wheel, heap)
-            wheel_request_id = wheel.add(interval, action.call_from_wheel)
-            heap_request_id = heap.add(interval, action.call_from_heap)
+            wheel_request_id = wheel.add(deadline, action.call_from_wheel)
+            heap_request_id = heap.add(deadline, action.call_from_heap)
             self.assert_whens(wheel, heap)
 
             assert wheel_request_id == heap_request_id
@@ -228,7 +228,7 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
         self.play_script(script_with_remove)
         return script_with_remove
 
-    @stateful.rule(now=st.integers(min_value=1, max_value=256),
+    @stateful.rule(now=st.integers(min_value=1, max_value=127),
                    script=scripts, target=scripts)
     def tick(self, now, script):
         def perform_tick(wheel, heap, state):

@@ -19,7 +19,7 @@ class ITimerModule(Interface):
     Varghese & Lauck 1987
     """
 
-    def add(interval, f, *args, **kwargs):
+    def add(deadline, f, *args, **kwargs):
         """
         From the paper:
 
@@ -30,8 +30,9 @@ class ITimerModule(Interface):
         can specify what action must be taken on expiry: for instance,
         calling a client-specified routine, or setting an event flag.
 
-        :param interval: When to run the action.
-        :type interval: :py:cls:`int`.
+        :param deadline: The absolute (not relative) time to run the
+            action.
+        :type deadline: :py:cls:`int`.
 
         :param f: The action to run after the interval has elapsed.
         :type f: :py:cls:`callable`.
@@ -155,11 +156,12 @@ class TimingWheel(object):
         self._last_id += 1
         return self._last_id
 
-    def add(self, interval, f, *args, **kwargs):
+    def add(self, deadline, f, *args, **kwargs):
+        interval = deadline - self._time
         request_id = self._make_id()
         action = (f, args, kwargs)
         timing_list = self._schedule[interval]
-        timing_list.deadline = self._time + interval
+        timing_list.deadline = deadline
         cell = timing_list.add_to_front((request_id, action))
         self._actions[request_id] = cell
         return request_id
