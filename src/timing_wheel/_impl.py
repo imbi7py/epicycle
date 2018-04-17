@@ -169,9 +169,9 @@ class TimingWheel(object):
             cell = self._actions.pop(request_id)
             cell.remove()
 
-    def tick(self, time):
+    def tick(self, now):
         for i in range(self._max_interval):
-            if self._schedule[0].deadline > time:
+            if self._schedule[0].deadline > now:
                 break
             timing_list = self._schedule.popleft()
             for (request_id, action) in timing_list.consume():
@@ -180,7 +180,7 @@ class TimingWheel(object):
                 del self._actions[request_id]
             timing_list.deadline = i
             self._schedule.append(timing_list)
-        self._time = time
+        self._time = now
 
     def when(self):
         pending = [
