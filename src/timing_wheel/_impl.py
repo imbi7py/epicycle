@@ -170,9 +170,9 @@ class TimingWheel(object):
             cell.remove()
 
     def tick(self, time):
-        offset = time - self._time
-        assert 0 <= offset < self._max_interval
-        for i in range(offset + 1):
+        for i in range(self._max_interval):
+            if self._schedule[0].deadline > time:
+                break
             timing_list = self._schedule.popleft()
             for (request_id, action) in timing_list.consume():
                 (f, args, kwargs) = action
