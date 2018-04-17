@@ -2,13 +2,14 @@ import attr
 import heapq
 from hypothesis import stateful, strategies as st
 import pytest
+from pyrsistent import pvector
 from timing_wheel import Empty, ITimerModule, TimingWheel
 from zope.interface import implementer, verify
 
 
 @implementer(ITimerModule)
 @attr.s
-class SchedulingHeap(object):
+class TimerHeap(object):
     """
     A min-heap-based implementation of :py:class:`ITimerModule`.
     """
@@ -40,7 +41,7 @@ class SchedulingHeap(object):
 
     def tick(self, now):
         while self._heap and self._heap[0][0] <= now:
-            interval, request_id, action = heapq.heappop(self._heap)
+            deadline, request_id, action = heapq.heappop(self._heap)
             f, args, kwargs = action
             f(*args, **kwargs)
         self._time = now
@@ -58,7 +59,7 @@ class TestAPI(object):
     """
 
     @pytest.fixture(params=[
-        SchedulingHeap,
+        TimerHeap,
         lambda: TimingWheel(128)
     ])
     def timer(self, request):
@@ -122,7 +123,7 @@ class TestAPI(object):
 
 
 @attr.s
-class Action(object):
+class _Action(object):
     request_id = attr.ib(default=None, init=False)
     wheel_called = attr.ib(default=False, init=False)
     heap_called = attr.ib(default=False, init=False)
@@ -139,29 +140,29 @@ class Action(object):
 
 @attr.s
 class TimerState(object):
-    wheel = attr.ib()
-    heap = attr.ib()
     now = attr.ib(default=0)
     request_ids = attr.ib(default=attr.Factory(dict))
+
+    def make_action(self):
+        return _Action()
+
+    def record_action(self, request_id, action):
+        action.request_id = request_id
+        self.request_ids[request_id] = action
 
 
 class VerificationStateMachine(stateful.RuleBasedStateMachine):
     """
     Verify the implementation of a timing wheel against the
-    :py:class:`SchedulingHeap`.
+    :py:class:`TimerHeap`.
     """
-    states = stateful.Bundle("state")
+    scripts = stateful.Bundle("scripts")
 
     def make_timing_wheel(self):
         """
         Make a timing wheel instance to test.
         """
         raise NotImplementedError
-
-    @stateful.rule(target=states)
-    def inital_state(self):
-        return TimerState(wheel=self.make_timing_wheel(),
-                          heap=SchedulingHeap())
 
     def assert_whens(self, wheel, heap):
         empty_raised = 'empty raised'
@@ -177,40 +178,69 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
 
         assert wheel_when == heap_when
 
+    def play_script(self, script):
+        wheel = self.make_timing_wheel()
+        heap = TimerHeap()
+        state = TimerState()
+        for step in script:
+            step(wheel, heap, state)
+
+    no_empty_script = True
+
+    @stateful.precondition(lambda self: self.no_empty_script)
+    @stateful.rule(target=scripts)
+    def inital_script(self):
+        self.no_empty_script = False
+        return pvector()
+
     @stateful.rule(interval=st.integers(min_value=0, max_value=16),
-                   state=states, target=states)
-    def add(self, interval, state):
-        self.assert_whens(state.wheel, state.heap)
-        action = Action()
-        wheel_request_id = state.wheel.add(interval, action.call_from_wheel)
-        heap_request_id = state.heap.add(interval, action.call_from_heap)
+                   script=scripts, target=scripts)
+    def add(self, interval, script):
+        def perform_add(wheel, heap, state):
+            action = state.make_action()
 
-        assert wheel_request_id == heap_request_id
-        self.assert_whens(state.wheel, state.heap)
+            self.assert_whens(wheel, heap)
+            wheel_request_id = wheel.add(interval, action.call_from_wheel)
+            heap_request_id = heap.add(interval, action.call_from_heap)
+            self.assert_whens(wheel, heap)
 
-        action.request_id = wheel_request_id
-        state.request_ids[wheel_request_id] = action
-        return state
+            assert wheel_request_id == heap_request_id
+            state.record_action(wheel_request_id, action)
 
-    @stateful.rule(data=st.data(), state=states, target=states)
-    def remove(self, data, state):
-        if state.request_ids:
-            request_id = data.draw(st.sampled_from(list(state.request_ids)))
-            state.request_ids.pop(request_id)
-            state.wheel.remove(request_id)
-            state.heap.remove(request_id)
-        return state
+        script_with_add = script.append(perform_add)
+        self.play_script(script_with_add)
+        return script_with_add
 
-    @stateful.rule(now=st.integers(min_value=1, max_value=16), state=states,
-                   target=states)
-    def tick(self, now, state):
-        state.now += now
+    @stateful.rule(data=st.data(), script=scripts, target=scripts)
+    def remove(self, data, script):
+        def perform_remove(wheel, heap, state):
+            if state.request_ids:
+                request_id = data.draw(
+                    st.sampled_from(list(state.request_ids)))
+                state.request_ids.pop(request_id)
 
-        state.wheel.tick(state.now)
-        state.heap.tick(state.now)
-        for request_id, action in state.request_ids.items():
-            action.equivalent()
-        return state
+                self.assert_whens(wheel, heap)
+                wheel.remove(request_id)
+                heap.remove(request_id)
+                self.assert_whens(wheel, heap)
+
+        script_with_remove = script.append(perform_remove)
+        self.play_script(script_with_remove)
+        return script_with_remove
+
+    @stateful.rule(now=st.integers(min_value=1, max_value=256),
+                   script=scripts, target=scripts)
+    def tick(self, now, script):
+        def perform_tick(wheel, heap, state):
+            state.now += now
+            wheel.tick(state.now)
+            heap.tick(state.now)
+            for action in state.request_ids.values():
+                action.equivalent()
+
+        script_with_tick = script.append(perform_tick)
+        self.play_script(script_with_tick)
+        return script_with_tick
 
 
 class VerifyTimingWheelStateMachine(VerificationStateMachine):
