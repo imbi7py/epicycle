@@ -100,6 +100,7 @@ class _Cell(object):
 class _List(object):
     head = attr.ib()
     tail = attr.ib()
+    deadline = attr.ib()
 
     def add_to_front(self, value):
         cell = _Cell(value)
@@ -121,12 +122,12 @@ class _List(object):
             cell = next_cell
 
 
-def make_list():
+def make_list(deadline):
     head = _Cell(None)
     tail = _Cell(None)
     head.add(tail)
     tail.add(head)
-    return _List(head, tail)
+    return _List(head, tail, deadline)
 
 
 @implementer(ITimerModule)
@@ -148,7 +149,7 @@ class TimingWheel(object):
     _actions = attr.ib(default=attr.Factory(dict))
 
     def __attrs_post_init__(self):
-        self._schedule = deque(make_list() for _ in range(self._max_interval))
+        self._schedule = deque(make_list(i) for i in range(self._max_interval))
 
     def _make_id(self):
         self._last_id += 1
@@ -158,6 +159,7 @@ class TimingWheel(object):
         request_id = self._make_id()
         action = (f, args, kwargs)
         timing_list = self._schedule[interval]
+        timing_list.deadline = self._time + interval
         cell = timing_list.add_to_front((request_id, action))
         self._actions[request_id] = cell
         return request_id
@@ -170,12 +172,13 @@ class TimingWheel(object):
     def tick(self, time):
         offset = time - self._time
         assert 0 <= offset < self._max_interval
-        for _ in range(offset + 1):
+        for i in range(offset + 1):
             timing_list = self._schedule.popleft()
             for (request_id, action) in timing_list.consume():
                 (f, args, kwargs) = action
                 f(*args, **kwargs)
                 del self._actions[request_id]
+            timing_list.deadline = i
             self._schedule.append(timing_list)
         self._time = time
 
@@ -186,4 +189,4 @@ class TimingWheel(object):
         ]
         if not pending:
             raise Empty()
-        return min(pending) + self._time
+        return self._schedule[min(pending)].deadline
