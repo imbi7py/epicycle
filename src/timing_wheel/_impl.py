@@ -30,7 +30,7 @@ class ITimerModule(Interface):
         can specify what action must be taken on expiry: for instance,
         calling a client-specified routine, or setting an event flag.
 
-        :param deadline: The absolute (not relative) time to run the
+        :param deadline: The relative delay after which to run the
             action.
         :type deadline: :py:cls:`int`.
 
@@ -52,16 +52,12 @@ class ITimerModule(Interface):
             :py:meth:`ITimerModule.add`.
         """
 
-    def tick(now):
+    def tick():
         """
-        Let the granularity of the timer-be T units.  Then every T
+        Let the granularity of the timer be T units.  Then every T
         units this routine checks whether any outstanding timers have
         expired; if so, it calls stop, which in turn calls the next
         routine.
-
-        :param now: The current absolute time.
-        :type now: A number; must be the same time as the ``interval``
-            argument to :py:meth:`ITimerModule.add`.
         """
 
     def when():
@@ -101,7 +97,6 @@ class _Cell(object):
 class _List(object):
     head = attr.ib()
     tail = attr.ib()
-    deadline = attr.ib()
 
     def add_to_front(self, value):
         cell = _Cell(value)
@@ -123,12 +118,12 @@ class _List(object):
             cell = next_cell
 
 
-def make_list(deadline):
+def make_list():
     head = _Cell(None)
     tail = _Cell(None)
     head.add(tail)
     tail.add(head)
-    return _List(head, tail, deadline)
+    return _List(head, tail)
 
 
 @implementer(ITimerModule)
@@ -150,18 +145,17 @@ class TimingWheel(object):
     _actions = attr.ib(default=attr.Factory(dict))
 
     def __attrs_post_init__(self):
-        self._schedule = deque(make_list(i) for i in range(self._max_interval))
+        self._schedule = [make_list() for _ in range(self._max_interval)]
 
     def _make_id(self):
         self._last_id += 1
         return self._last_id
 
-    def add(self, deadline, f, *args, **kwargs):
-        interval = deadline - self._time
+    def add(self, interval, f, *args, **kwargs):
         request_id = self._make_id()
         action = (f, args, kwargs)
-        timing_list = self._schedule[interval]
-        timing_list.deadline = deadline
+        offset = (self._time + interval) % self._max_interval
+        timing_list = self._schedule[offset]
         cell = timing_list.add_to_front((request_id, action))
         self._actions[request_id] = cell
         return request_id
@@ -171,24 +165,22 @@ class TimingWheel(object):
             cell = self._actions.pop(request_id)
             cell.remove()
 
-    def tick(self, now):
-        for i in range(self._max_interval):
-            if self._schedule[0].deadline > now:
-                break
-            timing_list = self._schedule.popleft()
+    def tick(self):
+        # This consists of actions added with a time of 0.
+        first = self._time % self._max_interval
+        self._time += 1
+        second = self._time % self._max_interval
+        for timing_list in self._schedule[first], self._schedule[second]:
             for (request_id, action) in timing_list.consume():
                 (f, args, kwargs) = action
                 f(*args, **kwargs)
                 del self._actions[request_id]
-            timing_list.deadline = i
-            self._schedule.append(timing_list)
-        self._time = now
 
     def when(self):
-        pending = [
-            i for i in range(self._max_interval)
-            if not self._schedule[i].empty()
-        ]
-        if not pending:
+        offset = self._time % self._max_interval
+        for i in range(self._max_interval):
+            scaled = (i + offset) % self._max_interval
+            if not self._schedule[scaled].empty():
+                return self._time + i
+        else:
             raise Empty()
-        return self._schedule[min(pending)].deadline

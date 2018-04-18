@@ -21,7 +21,8 @@ class TimerHeap(object):
         self._last_id += 1
         return self._last_id
 
-    def add(self, deadline, f, *args, **kwargs):
+    def add(self, interval, f, *args, **kwargs):
+        deadline = self._time + interval
         request_id = self._make_id()
         action = (f, args, kwargs)
         heapq.heappush(
@@ -39,8 +40,9 @@ class TimerHeap(object):
         heapq.heapify(heap_prime)
         self._heap = heap_prime
 
-    def tick(self, now):
-        while self._heap and self._heap[0][0] <= now:
+    def tick(self):
+        self._time += 1
+        while self._heap and self._heap[0][0] <= self._time:
             deadline, request_id, action = heapq.heappop(self._heap)
             f, args, kwargs = action
             f(*args, **kwargs)
@@ -112,11 +114,12 @@ class TestAPI(object):
         timer.add(2, run.append, 2)
         timer.add(3, run.append, 3)
 
-        timer.tick(2)
+        timer.tick()
+        timer.tick()
 
         assert run == [1, 2]
 
-        timer.tick(3)
+        timer.tick()
 
         assert run == [1, 2, 3]
 
@@ -139,7 +142,6 @@ class _Action(object):
 
 @attr.s
 class TimerState(object):
-    now = attr.ib(default=0)
     request_ids = attr.ib(default=attr.Factory(dict))
 
     def make_action(self):
@@ -196,12 +198,11 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
                    script=scripts, target=scripts)
     def add(self, interval, script):
         def perform_add(wheel, heap, state):
-            deadline = state.now + interval
             action = state.make_action()
 
             self.assert_whens(wheel, heap)
-            wheel_request_id = wheel.add(deadline, action.call_from_wheel)
-            heap_request_id = heap.add(deadline, action.call_from_heap)
+            wheel_request_id = wheel.add(interval, action.call_from_wheel)
+            heap_request_id = heap.add(interval, action.call_from_heap)
             self.assert_whens(wheel, heap)
 
             assert wheel_request_id == heap_request_id
@@ -228,15 +229,15 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
         self.play_script(script_with_remove)
         return script_with_remove
 
-    @stateful.rule(now=st.integers(min_value=1, max_value=127),
+    @stateful.rule(ticks=st.integers(min_value=1, max_value=127),
                    script=scripts, target=scripts)
-    def tick(self, now, script):
+    def tick(self, ticks, script):
         def perform_tick(wheel, heap, state):
-            state.now += now
-            wheel.tick(state.now)
-            heap.tick(state.now)
-            for action in state.request_ids.values():
-                action.equivalent()
+            for _ in range(ticks):
+                wheel.tick()
+                heap.tick()
+                for action in state.request_ids.values():
+                    action.equivalent()
 
         script_with_tick = script.append(perform_tick)
         self.play_script(script_with_tick)
