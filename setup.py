@@ -1,3 +1,7 @@
+"""
+An implementation of hierarchical timing wheels.
+"""
+
 from setuptools import setup, find_packages
 
 setup(
@@ -7,7 +11,8 @@ setup(
     install_requires=[
         "zope.interface"
     ],
-    extras_require = {
+    license='MIT',
+    extras_require={
         "dev": [
             "Hypothesis",
             "pytest",
