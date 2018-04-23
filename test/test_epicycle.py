@@ -3,7 +3,7 @@ import heapq
 from hypothesis import stateful, strategies as st
 import pytest
 from pyrsistent import pvector
-from timing_wheel import Empty, ITimerModule, TimingWheel
+from epicycle import Empty, ITimerModule, TimingWheel
 from zope.interface import implementer, verify
 
 
@@ -159,7 +159,7 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
     """
     scripts = stateful.Bundle("scripts")
 
-    def make_timing_wheel(self):
+    def make_epicycle(self):
         """
         Make a timing wheel instance to test.
         """
@@ -180,7 +180,7 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
         assert wheel_when == heap_when
 
     def play_script(self, script):
-        wheel = self.make_timing_wheel()
+        wheel = self.make_epicycle()
         heap = TimerHeap()
         state = TimerState()
         for step in script:
@@ -245,7 +245,7 @@ class VerificationStateMachine(stateful.RuleBasedStateMachine):
 
 
 class VerifyTimingWheelStateMachine(VerificationStateMachine):
-    def make_timing_wheel(self):
+    def make_epicycle(self):
         return TimingWheel(128)
 
 
